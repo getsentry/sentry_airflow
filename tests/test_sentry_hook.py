@@ -12,29 +12,33 @@ from airflow.utils import timezone
 
 from sentry_sdk import configure_scope
 
-from sentry_plugin.hooks.sentry_hook import SentryHook, get_task_instance
+from sentry_plugin.hooks.sentry_hook import (
+    SentryHook,
+    get_task_instances,
+    add_tagging,
+    add_breadcrumbs,
+)
 
 EXECUTION_DATE = timezone.utcnow()
 DAG_ID = "test_dag"
 TASK_ID = "test_task"
 OPERATOR = "test_operator"
 STATE = "success"
+DURATION = None
 TEST_SCOPE = {
     "dag_id": DAG_ID,
     "task_id": TASK_ID,
     "execution_date": EXECUTION_DATE,
-    "ds": EXECUTION_DATE.strftime("%Y-%m-%d"),
     "operator": OPERATOR,
 }
-TASK_REPR = "Upstream Task: {}.{}, Execution: {}, State:[{}], Operation: {}".format(
-    DAG_ID, TASK_ID, EXECUTION_DATE, STATE, OPERATOR
-)
+TASK_DATA = TEST_SCOPE.copy()
+TASK_DATA.update({"state": STATE, "operator": OPERATOR, "duration": DURATION})
 CRUMB_DATE = datetime.datetime(2019, 5, 15)
 CRUMB = {
     "timestamp": CRUMB_DATE,
     "type": "default",
     "category": "upstream_tasks",
-    "message": TASK_REPR,
+    "data": TASK_DATA,
     "level": "info",
 }
 
@@ -68,42 +72,41 @@ class TestSentryHook(unittest.TestCase):
         mock_get_connection.return_value = Connection(host="https://foo@sentry.io/123")
         self.sentry_hook = SentryHook("sentry_default")
         self.assertEqual(TaskInstance._sentry_integration_, True)
+
         self.dag = Mock(dag_id=DAG_ID)
+        self.dag.task_ids = [TASK_ID]
+
         self.task = Mock(dag=self.dag, dag_id=DAG_ID, task_id=TASK_ID)
         self.task.__class__.__name__ = OPERATOR
-        self.task.get_flat_relatives = MagicMock(return_value=[self.task])
 
         self.session = Session()
         self.ti = TaskInstance(self.task, execution_date=EXECUTION_DATE)
+        self.ti.operator = OPERATOR
         self.session.query = MagicMock(return_value=MockQuery(self.ti))
 
-    def test_add_sentry(self):
+    def test_add_tags(self):
         """
         Test adding tags.
         """
-
-        # Already setup TaskInstance
+        add_tagging(self.ti)
         with configure_scope() as scope:
             for key, value in scope._tags.items():
                 self.assertEqual(TEST_SCOPE[key], value)
 
-    def test_get_task_instance(self):
+    def test_get_task_instances(self):
         """
-        Test adding tags.
+        Test getting instances that have already completed.
         """
-        ti = get_task_instance(self.task, EXECUTION_DATE, self.session)
-        self.assertEqual(ti, self.ti)
+        ti = get_task_instances(DAG_ID, [TASK_ID], EXECUTION_DATE, self.session)
+        self.assertEqual(ti[0], self.ti)
 
     @freeze_time(CRUMB_DATE.isoformat())
-    def test_pre_execute(self):
+    def test_add_breadcrumbs(self):
         """
         Test adding breadcrumbs.
         """
-        task_copy = copy.copy(self.task)
-        task_copy.pre_execute(self.ti, context=None)
-        self.task.get_flat_relatives.assert_called_once()
+        add_breadcrumbs(self.ti, self.session)
 
         with configure_scope() as scope:
             test_crumb = scope._breadcrumbs.pop()
-            print(test_crumb)
             self.assertEqual(CRUMB, test_crumb)

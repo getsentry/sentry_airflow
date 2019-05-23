@@ -2,6 +2,7 @@ from airflow.plugins_manager import AirflowPlugin
 from sentry_plugin.hooks.sentry_hook import SentryHook
 
 
+
 class SentryPlugin(AirflowPlugin):
     name = "SentryPlugin"
     hooks = [SentryHook]
