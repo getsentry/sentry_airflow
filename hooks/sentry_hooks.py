@@ -12,19 +12,19 @@ class SentryHook(BaseHook):
 		self.connection = self.get_connection(sentry_conn_id)     
 		self.dsn = self.sentry_conn_id.extra_dejson.get('dsn')
 
-    def get_conn(self):
+	def get_conn(self):
 		@provide_session
 		client = raven.Client()
 		if self.dsn is not None:
 			client = raven.Client(self.dsn)
 		return client
 
-    def set_signals(self):
-    	client = self.get_conn()
-    	register_logger_signal(client)
-    	register_signal(client)
+	def set_signals(self):
+		client = self.get_conn()
+		register_logger_signal(client)
+		register_signal(client)
 
-    def set_logger(self):
+	def set_logger(self):
 		handler = SentryHandler()
 		if self.dsn is not None:
 			handler = SentryHandler(dsn=self.dsn)
