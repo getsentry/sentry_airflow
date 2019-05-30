@@ -73,18 +73,21 @@ def add_sentry(self, task, execution_date, state=None):
 
 class SentryHook(BaseHook):
 	def __init__(self):
-		try:
-			self.conn_id = self.get_connection("sentry_dsn")
-			self.dsn = self.conn_id.host
-		except AirflowException:
-			self.conn_id = None
-			self.dsn = None
 		sentry_logging = LoggingIntegration(
 			level=logging.INFO,
 			event_level=logging.ERROR 
 		)
 		sentry_celery = CeleryIntegration()
-		sentry_sdk.init(dsn=self.dsn, integrations=[sentry_celery])
+
+		self.conn_id = None
+		self.dsn = None
+
+		try:
+			self.conn_id = self.get_connection("sentry_dsn")
+			self.dsn = self.conn_id.host
+			sentry_sdk.init(dsn=self.dsn, integrations=[sentry_celery])
+		except:
+			sentry_sdk.init(integrations=[sentry_celery])
 		TaskInstance.__init__ = add_sentry
 		# TaskInstance.get_template_context = set_tags
 		# TaskInstance.xcomm_push = set_crumbs
