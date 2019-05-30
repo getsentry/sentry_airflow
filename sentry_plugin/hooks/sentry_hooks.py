@@ -1,15 +1,22 @@
 import sentry_sdk
 import logging
+
+from flask import request
+
 from airflow.hooks.base_hook import BaseHook
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 # from airflow.utils.db import provide_session
+from airflow import settings
+from airflow.models import DagBag
 from airflow.models import TaskInstance
 from sentry_sdk import configure_scope, add_breadcrumb
 
-original_get_context = TaskInstance.get_template_context
-original_xcomm_push = TaskInstance.xcom_push
+# original_get_context = TaskInstance.get_template_context
+# original_xcomm_push = TaskInstance.xcom_push
 original_task_init = TaskInstance.__init__
+
+dagbag = DagBag(settings.DAGS_FOLDER)
 
 # @provide_session
 # def set_tags(self, session=None):
@@ -41,31 +48,36 @@ def add_sentry(self, task, execution_date, state=None):
 		scope.set_tag("ds", self.execution_date.strftime("%Y-%m-%d"))
 		scope.set_tag("operator", self.operator)
 
-	original_success = self.task.on_success_callback
+
+	# original_success = self.task.on_success_callback
 	original_failure = self.task.on_failure_callback
-	def on_success(context, **kwargs):
-		if original_success:
-			original_success(context, kwargs)
-		with configure_scope() as scope:
-			scope.set_tag("Hello", self.task_id)
-		add_breadcrumb(
-			category="data",
-			message="Dag: %s, with Task: %s Executed on: %s" % (self.dag_id, self.task_id, self.execution_date),
-			level="error"
-		)
+	# def on_success(context, **kwargs):
+	# 	if original_success:
+	# 		original_success(context, kwargs)
+	# 	with configure_scope() as scope:
+	# 		scope.set_tag("Hello", self.task_id)
+	# 	add_breadcrumb(
+	# 		category="data",
+	# 		message="Dag: %s, with Task: %s Executed on: %s" % (self.dag_id, self.task_id, self.execution_date),
+	# 		level="error"
+	# 	)
 
 	def on_failure(context, **kwargs):
 		if original_failure:
 			original_failure(context, kwargs)
-		add_breadcrumb(
-			category="data",
-			message="Dag: %s, with Task: %s Executed on: %s" % (self.dag_id, self.task_id, self.execution_date),
-			level="error"
-		)
+		# add_breadcrumb(
+		# 	category="data",
+		# 	message="Dag: %s, with Task: %s Executed on: %s" % (self.dag_id, self.task_id, self.execution_date),
+		# 	level="error"
+		# )
+		dag = dagbag.get_dag(self.dag_id)
+		for t in dag.tasks:
+			self.log.info("Osmar look here!")
+			self.log.info(t)
 
 
 
-	self.task.on_success_callback = on_success
+	# self.task.on_success_callback = on_success
 	self.task.on_failure_callback = on_failure
 
 
