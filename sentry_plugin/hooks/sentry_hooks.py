@@ -15,6 +15,7 @@ from sentry_sdk import configure_scope, add_breadcrumb
 # original_get_context = TaskInstance.get_template_context
 # original_xcomm_push = TaskInstance.xcom_push
 original_task_init = TaskInstance.__init__
+original_clear_xcom = TaskInstance.clear_xcom_data
 
 # dagbag = DagBag(settings.DAGS_FOLDER)
 
@@ -54,6 +55,22 @@ original_task_init = TaskInstance.__init__
 # 		)
 # 	original_xcomm_push(self, key, value, execution_date)
 
+# hint = {}
+# def before_breadcrumb(crumb, assert_hint):
+# 	if "current_task" in hint and hint != assert_hint:
+# 		return None
+# 	return crumb
+
+@provide_session
+def new_clear_xcom(self, session=None):
+	for t in self.task.get_flat_relatives(upstream=True):
+		state = TaskInstance(t, self.execution_date).current_state()
+		add_breadcrumb(
+			category="data",
+			message="Upstream Task: %s was %s" % (t.task_id, state),
+			level="info"
+		)
+	original_clear_xcom(self, session)
 
 def add_sentry(self, task, execution_date, state=None):
 	original_task_init(self, task, execution_date, state)
@@ -63,6 +80,7 @@ def add_sentry(self, task, execution_date, state=None):
 		scope.set_tag("execution_date", self.execution_date)
 		scope.set_tag("ds", self.execution_date.strftime("%Y-%m-%d"))
 		scope.set_tag("operator", self.operator)
+		# hint["current_task"] = self.task_id
 
 	# original_success = self.task.on_success_callback
 	# original_failure = self.task.on_failure_callback
@@ -92,15 +110,19 @@ def add_sentry(self, task, execution_date, state=None):
 	# 		message="Dag: %s, with Task: %s Executed on: %s it was %s" % (self.dag_id, t.task_id, t.state),
 	# 		level="info"
 	# 	)
-	task_instances = {
-		t.task_id = TaskInstance(t, self.execution_date).current_state()
-		for t in self.task.get_flat_relatives(upstream=True)
-	}
 
-	for task, state in task_instances.items():
-		add_breadcrumb(
+	# for t in self.task.get_flat_relatives(upstream=True):
+	# 	state = TaskInstance(t, self.execution_date).current_state()
+	# 	add_breadcrumb(
+	# 		category="data",
+	# 		message="Upstream Task: %s was %s" % (t.task_id, state),
+	# 		level="info",
+	# 		hint=hint
+	# 	)
+
+	add_breadcrumb(
 			category="data",
-			message="Task: %s was %s" % (task, state),
+			message="Task %s initialized" % self.task_id,
 			level="info"
 		)
 
@@ -131,6 +153,7 @@ class SentryHook(BaseHook):
 			sentry_sdk.init(dsn=self.dsn, integrations=integrations)
 		except:
 			sentry_sdk.init(integrations=integrations)
-		TaskInstance.__init__ = add_sentry
+		TaskInstance.__init__ = add_sentry # Monkey patch
+		TaskInstance.clear_xcom_data = new_clear_xcom
 		# TaskInstance.get_template_context = set_tags
 		# TaskInstance.xcomm_push = set_crumbs
