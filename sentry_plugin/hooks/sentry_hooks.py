@@ -1,68 +1,25 @@
-import sentry_sdk
 import logging
 
 from flask import request
 
-from airflow.hooks.base_hook import BaseHook
-from sentry_sdk.integrations.celery import CeleryIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration, ignore_logger
-from airflow.utils.db import provide_session
 from airflow import settings
+from airflow.hooks.base_hook import BaseHook
+from airflow.utils.db import provide_session
 from airflow.models import DagBag
 from airflow.models import TaskInstance
-from sentry_sdk import configure_scope, add_breadcrumb
 
-# original_get_context = TaskInstance.get_template_context
-# original_xcomm_push = TaskInstance.xcom_push
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.logging import ignore_logger
+from sentry_sdk import configure_scope, add_breadcrumb, init
+
 original_task_init = TaskInstance.__init__
 original_clear_xcom = TaskInstance.clear_xcom_data
 
-# dagbag = DagBag(settings.DAGS_FOLDER)
-
-# @provide_session
-# def set_tags(self, session=None):
-# 	context = original_get_context(self, session)
-# 	with configure_scope() as scope:
-# 		if context is not None:
-# 			scope.set_tag("task_id", self.task_id)
-# 			scope.set_tag("dag_id", self.dag_id)
-# 			scope.set_tag("execution_date", context["execution_date"])
-# 			scope.set_tag("ds", context["ds"])
-# 			scope.set_tag("operator", self.operator)
-
-# 	# dag = dagbag.get_dag(self.dag_id)
-# 	# task_instances = {
-# 	# 	ti.task_id = alchemy_to_dict(ti)
-# 	# 	for ti in dag.get_task_instances(session, execution_date, execution_date)
-# 	# }
-# 	for t in self.task.get_flat_relatives(upstream=True):
-# 		if t.task_id is None or t.task_id == "":
-# 			continue
-# 		ti = TaskInstance(t, self.execution_date)
-# 		add_breadcrumb(
-# 			category="data",
-# 			message="Task: %s was %s" % (t.task_id, ti.current_state()),
-# 			level="info"
-# 		)
-
-# 	return context
-
-# def set_crumbs(self, key, value, execution_date=None):
-# 	add_breadcrumb(
-# 			category="data",
-# 			message="Passing result: %s for dag: %s and task: %s." % (value, self.dag_id, self.task_id),
-# 			level="info"
-# 		)
-# 	original_xcomm_push(self, key, value, execution_date)
-
-# hint = {}
-# def before_breadcrumb(crumb, assert_hint):
-# 	if "current_task" in hint and hint != assert_hint:
-# 		return None
-# 	return crumb
-
 @provide_session
 def new_clear_xcom(self, session=None):
+	'''
+	Add breadcrumbs just before task is executed.
+	'''
 	for t in self.task.get_flat_relatives(upstream=True):
 		state = TaskInstance(t, self.execution_date).current_state()
 		add_breadcrumb(
@@ -73,6 +30,9 @@ def new_clear_xcom(self, session=None):
 	original_clear_xcom(self, session)
 
 def add_sentry(self, task, execution_date, state=None):
+	'''
+	Change the TaskInstance init function to add costumized tagging.
+	'''
 	original_task_init(self, task, execution_date, state)
 	with configure_scope() as scope:
 		scope.set_tag("task_id", self.task_id)
@@ -80,66 +40,12 @@ def add_sentry(self, task, execution_date, state=None):
 		scope.set_tag("execution_date", self.execution_date)
 		scope.set_tag("ds", self.execution_date.strftime("%Y-%m-%d"))
 		scope.set_tag("operator", self.operator)
-		# hint["current_task"] = self.task_id
-
-	# original_success = self.task.on_success_callback
-	# original_failure = self.task.on_failure_callback
-	# def on_success(context, **kwargs):
-	# 	if original_success:
-	# 		original_success(context, kwargs)
-	# 	with configure_scope() as scope:
-	# 		scope.set_tag("Hello", self.task_id)
-	# 	add_breadcrumb(
-	# 		category="data",
-	# 		message="Dag: %s, with Task: %s Executed on: %s" % (self.dag_id, self.task_id, self.execution_date),
-	# 		level="error"
-	# 	)
-
-	# def on_failure(context, **kwargs):
-	# 	if original_failure:
-	# 		original_failure(context, kwargs)
-		# add_breadcrumb(
-		# 	category="data",
-		# 	message="Dag: %s, with Task: %s Executed on: %s" % (self.dag_id, self.task_id, self.execution_date),
-		# 	level="error"
-		# )
-	# for t in self.task.get_flat_relatives:
-	# 	task_instance = 
-	# 	add_breadcrumb(
-	# 		category="data",
-	# 		message="Dag: %s, with Task: %s Executed on: %s it was %s" % (self.dag_id, t.task_id, t.state),
-	# 		level="info"
-	# 	)
-
-	# for t in self.task.get_flat_relatives(upstream=True):
-	# 	state = TaskInstance(t, self.execution_date).current_state()
-	# 	add_breadcrumb(
-	# 		category="data",
-	# 		message="Upstream Task: %s was %s" % (t.task_id, state),
-	# 		level="info",
-	# 		hint=hint
-	# 	)
-
-	add_breadcrumb(
-			category="data",
-			message="Task %s initialized" % self.task_id,
-			level="info"
-		)
-
-
-
-	# self.task.on_success_callback = on_success
-	# self.task.on_failure_callback = on_failure
-
-
-
 
 class SentryHook(BaseHook):
+	'''
+	Wrap around the Sentry SDK.
+	'''
 	def __init__(self):
-		sentry_logging = LoggingIntegration(
-			level=logging.INFO,
-			event_level=logging.ERROR 
-		)
 		sentry_celery = CeleryIntegration()
 		integrations = [sentry_celery]
 		ignore_logger("airflow.task")
@@ -150,10 +56,9 @@ class SentryHook(BaseHook):
 		try:
 			self.conn_id = self.get_connection("sentry_dsn")
 			self.dsn = self.conn_id.host
-			sentry_sdk.init(dsn=self.dsn, integrations=integrations)
+			init(dsn=self.dsn, integrations=integrations)
 		except:
-			sentry_sdk.init(integrations=integrations)
-		TaskInstance.__init__ = add_sentry # Monkey patch
+			init(integrations=integrations)
+
+		TaskInstance.__init__ = add_sentry
 		TaskInstance.clear_xcom_data = new_clear_xcom
-		# TaskInstance.get_template_context = set_tags
-		# TaskInstance.xcomm_push = set_crumbs
