@@ -6,6 +6,12 @@ A plugin for airflow dags and tasks that sets up [Sentry](sentry.io) for error l
 
 ### Local
 
+Install the `sentry-sdk`.
+
+```
+$ pip install sentry-sdk
+```
+
 Create a plugin folder in your `AIRFLOW_HOME` directory if you do not have one yet.
 
 ```
@@ -22,6 +28,8 @@ $ git clone git@github.com:getsentry/sentry-airflow.git
 Make sure you have setup your `SENTRY_DSN` in your environment variables!
 
 ### Google Composer
+
+Install the `sentry-sdk` into Google Composer's [Python dependencies](https://cloud.google.com/composer/docs/how-to/using/installing-python-dependencies#install-package).
 
 Add this folder to your plugin directory
 
