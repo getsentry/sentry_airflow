@@ -59,6 +59,7 @@ class MockQuery(object):
 class TestSentryHook(unittest.TestCase):
     @mock.patch("sentry_plugin.hooks.sentry_hook.SentryHook.get_connection")
     def setUp(self, mock_get_connection):
+        self.assertEqual(TaskInstance._sentry_integration_, True)
         mock_get_connection.return_value = Connection(host="https://foo@sentry.io/123")
         self.sentry_hook = SentryHook("sentry_default")
         self.assertEqual(TaskInstance._sentry_integration_, True)
@@ -81,6 +82,16 @@ class TestSentryHook(unittest.TestCase):
             for key, value in scope._tags.items():
                 self.assertEqual(TEST_SCOPE[key], value)
 
+    def test_get_task_instance_attr(self):
+        """
+        Test getting object attributes.
+        """
+
+        state = get_task_instance_attr(self.ti, TASK_ID, "state", self.session)
+        operator = get_task_instance_attr(self.ti, TASK_ID, "operator", self.session)
+        self.assertEqual(state, STATE)
+        self.assertEqual(operator, OPERATOR)
+
     @freeze_time(CRUMB_DATE.isoformat())
     def test_pre_execute(self):
         """
@@ -93,13 +104,3 @@ class TestSentryHook(unittest.TestCase):
             test_crumb = scope._breadcrumbs.pop()
             print(test_crumb)
             self.assertEqual(CRUMB, test_crumb)
-
-    def test_get_task_instance_attr(self):
-        """
-        Test getting object attributes.
-        """
-
-        state = get_task_instance_attr(self.ti, TASK_ID, "state", self.session)
-        operator = get_task_instance_attr(self.ti, TASK_ID, "operator", self.session)
-        self.assertEqual(state, STATE)
-        self.assertEqual(operator, OPERATOR)
