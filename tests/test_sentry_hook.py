@@ -39,7 +39,7 @@ CRUMB = {
 
 class MockQuery(object):
     """
-    Mock Query for qhen session is called.
+    Mock Query for when session is called.
     """
 
     def __init__(self, task_instance):
