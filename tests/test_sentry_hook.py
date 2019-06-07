@@ -1,20 +1,17 @@
 import datetime
 import unittest
+from unittest import mock
 from unittest.mock import Mock, MagicMock
 from freezegun import freeze_time
 
 from airflow.models import TaskInstance
+from airflow.models import Connection
 from airflow.settings import Session
 from airflow.utils import timezone
 
 from sentry_sdk import configure_scope
 
-from sentry_plugin.hooks.sentry_hooks import (
-    SentryHook,
-    add_sentry,
-    get_task_instance_attr,
-    new_clear_xcom,
-)
+from sentry_plugin.hooks.sentry_hook import SentryHook, get_task_instance_attr
 
 EXECUTION_DATE = timezone.utcnow()
 DAG_ID = "test_dag"
@@ -42,8 +39,8 @@ CRUMB = {
 
 class MockQuery(object):
     """
-	Mock Query for qhen session is called.
-	"""
+    Mock Query for when session is called.
+    """
 
     def __init__(self, task_instance):
         task_instance.state = STATE
@@ -60,9 +57,12 @@ class MockQuery(object):
 
 
 class TestSentryHook(unittest.TestCase):
-    def setUp(self):
+    @mock.patch("sentry_plugin.hooks.sentry_hook.SentryHook.get_connection")
+    def setUp(self, mock_get_connection):
         self.assertEqual(TaskInstance._sentry_integration_, True)
-        self.sentry_hook = SentryHook
+        mock_get_connection.return_value = Connection(host="https://foo@sentry.io/123")
+        self.sentry_hook = SentryHook("sentry_default")
+        self.assertEqual(TaskInstance._sentry_integration_, True)
         self.dag = Mock(dag_id=DAG_ID)
         self.task = Mock(dag=self.dag, dag_id=DAG_ID, task_id=TASK_ID)
         self.task.__class__.__name__ = OPERATOR
@@ -93,12 +93,11 @@ class TestSentryHook(unittest.TestCase):
         self.assertEqual(operator, OPERATOR)
 
     @freeze_time(CRUMB_DATE.isoformat())
-    def test_new_clear_xcom(self):
+    def test_pre_execute(self):
         """
         Test adding breadcrumbs.
         """
-
-        new_clear_xcom(self.ti, self.session)
+        self.task.pre_execute(self.ti, context=None)
         self.task.get_flat_relatives.assert_called_once()
 
         with configure_scope() as scope:

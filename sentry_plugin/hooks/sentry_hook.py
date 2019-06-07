@@ -1,21 +1,14 @@
-import logging
-
-from flask import request
-
-from airflow import settings
-from airflow.configuration import conf
+from airflow import configuration
 from airflow.exceptions import AirflowException
 from airflow.hooks.base_hook import BaseHook
-from airflow.models import DagBag
 from airflow.models import TaskInstance
 from airflow.utils.db import provide_session
 
 from sentry_sdk import configure_scope, add_breadcrumb, init
-from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.logging import ignore_logger
 from sqlalchemy import exc
 
-SCOPE_TAGS = frozenset(("task_id", "dag_id", "execution_date", "ds", "operator"))
+SCOPE_TAGS = frozenset(("task_id", "dag_id", "execution_date", "operator"))
 
 
 @provide_session
@@ -42,42 +35,32 @@ def get_task_instance_attr(self, task_id, attr, session=None):
     return attr
 
 
-@property
-def ds(self):
-    """
-    Date stamp for task object.
-    """
-    return self.execution_date.strftime("%Y-%m-%d")
-
-
-@provide_session
-def new_clear_xcom(self, session=None):
-    """
-    Add breadcrumbs just before task is executed.
-    """
-    for task in self.task.get_flat_relatives(upstream=True):
-        task_id = task.task_id
-        state = get_task_instance_attr(self, task_id, "state")
-        operation = get_task_instance_attr(self, task_id, "operator")
-        add_breadcrumb(
-            category="data",
-            message="Upstream Task: {}, State: {}, Operation: {}".format(
-                task_id, state, operation
-            ),
-            level="info",
-        )
-    original_clear_xcom(self, session)
-
-
 def add_sentry(self, *args, **kwargs):
     """
-    Change the TaskInstance init function to add customized tagging.
+    Add customized tagging and breadcrumbs to TaskInstance init.
     """
     original_task_init(self, *args, **kwargs)
     self.operator = self.task.__class__.__name__
     with configure_scope() as scope:
         for tag_name in SCOPE_TAGS:
             scope.set_tag(tag_name, getattr(self, tag_name))
+
+    original_pre_execute = self.task.pre_execute
+
+    def add_breadcrumbs(self, context):
+        for task in self.task.get_flat_relatives(upstream=True):
+            state = get_task_instance_attr(self, task.task_id, "state")
+            operation = task.__class__.__name__
+            add_breadcrumb(
+                category="data",
+                message="Upstream Task: {}, State: {}, Operation: {}".format(
+                    task.task_id, state, operation
+                ),
+                level="info",
+            )
+        original_pre_execute(context=context)
+
+    self.task.pre_execute = add_breadcrumbs
 
 
 class SentryHook(BaseHook):
@@ -86,15 +69,29 @@ class SentryHook(BaseHook):
     """
 
     def __init__(self, sentry_conn_id=None):
-        sentry_celery = CeleryIntegration()
-        integrations = [sentry_celery]
+        integrations = []
         ignore_logger("airflow.task")
+        executor_name = configuration.conf.get("core", "EXECUTOR")
+
+        if executor_name == "CeleryExecutor":
+            from sentry_sdk.integrations.celery import CeleryIntegration
+
+            sentry_celery = CeleryIntegration()
+            integrations = [sentry_celery]
+        else:
+            import logging
+            from sentry_sdk.integrations.logging import LoggingIntegration
+
+            sentry_logging = LoggingIntegration(
+                level=logging.INFO, event_level=logging.ERROR
+            )
+            integrations = [sentry_logging]
 
         self.conn_id = None
         self.dsn = None
 
         try:
-            if sentry_conn_id == None:
+            if sentry_conn_id is None:
                 self.conn_id = self.get_connection("sentry_dsn")
             else:
                 self.conn_id = self.get_connection(sentry_conn_id)
@@ -107,12 +104,9 @@ class SentryHook(BaseHook):
             init(integrations=integrations)
 
         TaskInstance.__init__ = add_sentry
-        TaskInstance.clear_xcom_data = new_clear_xcom
-        TaskInstance.ds = ds
         TaskInstance._sentry_integration_ = True
 
 
 if not getattr(TaskInstance, "_sentry_integration_", False):
     original_task_init = TaskInstance.__init__
-    original_clear_xcom = TaskInstance.clear_xcom_data
     SentryHook()

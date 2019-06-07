@@ -1,5 +1,5 @@
 from airflow.plugins_manager import AirflowPlugin
-from sentry_plugin.hooks.sentry_hooks import SentryHook
+from sentry_plugin.hooks.sentry_hook import SentryHook
 
 
 class SentryPlugin(AirflowPlugin):
