@@ -37,7 +37,7 @@ CRUMB = {
 }
 
 
-class MockQuery(object):
+class MockQuery:
     """
     Mock Query for when session is called.
     """
