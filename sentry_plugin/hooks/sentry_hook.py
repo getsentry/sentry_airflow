@@ -12,7 +12,7 @@ SCOPE_TAGS = frozenset(("task_id", "dag_id", "execution_date", "operator"))
 
 
 @provide_session
-def get_task_instance_attr(self, task_id, attr, session=None):
+def get_task_instance(task, execution_date, session=None):
     """
     Retrieve attribute from task.
     """
@@ -22,17 +22,13 @@ def get_task_instance_attr(self, task_id, attr, session=None):
     ti = (
         session.query(TI)
         .filter(
-            TI.dag_id == self.dag_id,
-            TI.task_id == task_id,
-            TI.execution_date == self.execution_date,
+            TI.dag_id == task.dag_id,
+            TI.task_id == task.task_id,
+            TI.execution_date == execution_date,
         )
-        .all()
+        .first()
     )
-    if ti:
-        attr = getattr(ti[0], attr)
-    else:
-        attr = None
-    return attr
+    return ti
 
 
 def add_sentry(self, *args, **kwargs):
@@ -47,14 +43,17 @@ def add_sentry(self, *args, **kwargs):
 
     original_pre_execute = self.task.pre_execute
 
-    def add_breadcrumbs(self, context):
-        for task in self.task.get_flat_relatives(upstream=True):
-            state = get_task_instance_attr(self, task.task_id, "state")
-            operation = task.__class__.__name__
+    task_copy = self.task
+    execution_date_copy = self.execution_date
+    def add_breadcrumbs(self=task_copy, context=None):
+        for task in task_copy.get_flat_relatives(upstream=True):
+            task_instance = get_task_instance(task, execution_date_copy)
+            operator = task.__class__.__name__
             add_breadcrumb(
-                category="data",
-                message="Upstream Task: {}, State: {}, Operation: {}".format(
-                    task.task_id, state, operation
+                category="upstream_tasks",
+                message="Upstream Task: {ti.dag_id}.{ti.task_id}, "
+                "Execution: {ti.execution_date}, State:[{ti.state}], Operation: {operator}".format(
+                    ti=task_instance, operator=operator
                 ),
                 level="info",
             )

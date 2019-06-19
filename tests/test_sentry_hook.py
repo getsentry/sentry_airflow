@@ -1,3 +1,4 @@
+import copy
 import datetime
 import unittest
 from unittest import mock
@@ -97,7 +98,8 @@ class TestSentryHook(unittest.TestCase):
         """
         Test adding breadcrumbs.
         """
-        self.task.pre_execute(self.ti, context=None)
+        task_copy = copy.copy(self.task)
+        task_copy.pre_execute(self.ti, context=None)
         self.task.get_flat_relatives.assert_called_once()
 
         with configure_scope() as scope:
