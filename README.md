@@ -1,4 +1,6 @@
 [![Build Status](https://travis-ci.com/getsentry/sentry-airflow.svg?branch=master)](https://travis-ci.com/getsentry/sentry-airflow)
+[![License](http://img.shields.io/:license-Apache%202-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0.txt)
+[![Sentry Status](https://img.shields.io/badge/sentry-sign_up-white.svg?logo=sentry&style=social)](https://docs.sentry.io)
 
 # Sentry Airflow Plugin
 
