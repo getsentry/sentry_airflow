@@ -12,7 +12,7 @@ from airflow.utils import timezone
 
 from sentry_sdk import configure_scope
 
-from sentry_plugin.hooks.sentry_hook import SentryHook, get_task_instance_attr
+from sentry_plugin.hooks.sentry_hook import SentryHook, get_task_instance
 
 EXECUTION_DATE = timezone.utcnow()
 DAG_ID = "test_dag"
@@ -26,14 +26,15 @@ TEST_SCOPE = {
     "ds": EXECUTION_DATE.strftime("%Y-%m-%d"),
     "operator": OPERATOR,
 }
+TASK_REPR = "Upstream Task: {}.{}, Execution: {}, State:[{}], Operation: {}".format(
+    DAG_ID, TASK_ID, EXECUTION_DATE, STATE, OPERATOR
+)
 CRUMB_DATE = datetime.datetime(2019, 5, 15)
 CRUMB = {
     "timestamp": CRUMB_DATE,
     "type": "default",
-    "category": "data",
-    "message": "Upstream Task: {}, State: {}, Operation: {}".format(
-        TASK_ID, STATE, OPERATOR
-    ),
+    "category": "upstream_tasks",
+    "message": TASK_REPR,
     "level": "info",
 }
 
@@ -52,6 +53,9 @@ class MockQuery:
 
     def all(self):
         return self.arr
+
+    def first(self):
+        return self.arr[0]
 
     def delete(self):
         pass
@@ -83,15 +87,12 @@ class TestSentryHook(unittest.TestCase):
             for key, value in scope._tags.items():
                 self.assertEqual(TEST_SCOPE[key], value)
 
-    def test_get_task_instance_attr(self):
+    def test_get_task_instance(self):
         """
-        Test getting object attributes.
+        Test adding tags.
         """
-
-        state = get_task_instance_attr(self.ti, TASK_ID, "state", self.session)
-        operator = get_task_instance_attr(self.ti, TASK_ID, "operator", self.session)
-        self.assertEqual(state, STATE)
-        self.assertEqual(operator, OPERATOR)
+        ti = get_task_instance(self.task, EXECUTION_DATE, self.session)
+        self.assertEqual(ti, self.ti)
 
     @freeze_time(CRUMB_DATE.isoformat())
     def test_pre_execute(self):
