@@ -46,6 +46,7 @@ def add_sentry(self, *args, **kwargs):
 
     task_copy = self.task
     execution_date_copy = self.execution_date
+
     def add_breadcrumbs(self=task_copy, context=None):
         for task in task_copy.get_flat_relatives(upstream=True):
             task_instance = get_task_instance(task, execution_date_copy)
