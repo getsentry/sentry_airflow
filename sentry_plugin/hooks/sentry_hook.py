@@ -6,6 +6,7 @@ from airflow.utils.db import provide_session
 
 from sentry_sdk import configure_scope, add_breadcrumb, init
 from sentry_sdk.integrations.logging import ignore_logger
+from sentry_sdk.integrations.flask import FlaskIntegration
 from sqlalchemy import exc
 
 SCOPE_TAGS = frozenset(("task_id", "dag_id", "execution_date", "operator"))
@@ -72,6 +73,8 @@ class SentryHook(BaseHook):
         ignore_logger("airflow.task")
         executor_name = configuration.conf.get("core", "EXECUTOR")
 
+        sentry_flask = FlaskIntegration()
+
         if executor_name == "CeleryExecutor":
             from sentry_sdk.integrations.celery import CeleryIntegration
 
@@ -85,6 +88,8 @@ class SentryHook(BaseHook):
                 level=logging.INFO, event_level=logging.ERROR
             )
             integrations = [sentry_logging]
+
+        integrations.append(sentry_flask)
 
         self.conn_id = None
         self.dsn = None
