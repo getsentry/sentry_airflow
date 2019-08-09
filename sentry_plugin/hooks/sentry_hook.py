@@ -1,67 +1,91 @@
-from airflow import configuration
+from airflow import configuration as conf
 from airflow.exceptions import AirflowException
 from airflow.hooks.base_hook import BaseHook
 from airflow.models import TaskInstance
 from airflow.utils.db import provide_session
+from airflow.utils.state import State
 
-from sentry_sdk import configure_scope, add_breadcrumb, init
+from sentry_sdk import (
+    configure_scope,
+    push_scope,
+    capture_exception,
+    add_breadcrumb,
+    init,
+)
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.integrations.flask import FlaskIntegration
-from sqlalchemy import exc
+from sqlalchemy import exc, or_
 
 SCOPE_TAGS = frozenset(("task_id", "dag_id", "execution_date", "operator"))
+SCOPE_CRUMBS = frozenset(
+    ("dag_id", "task_id", "execution_date", "state", "operator", "duration")
+)
 
 
 @provide_session
-def get_task_instance(task, execution_date, session=None):
+def get_task_instances(dag_id, task_ids, execution_date, session=None):
     """
     Retrieve attribute from task.
     """
-    if session is None:
-        return None
+    if session is None or not task_ids:
+        return []
     TI = TaskInstance
     ti = (
         session.query(TI)
         .filter(
-            TI.dag_id == task.dag_id,
-            TI.task_id == task.task_id,
+            TI.dag_id == dag_id,
+            TI.task_id.in_(task_ids),
             TI.execution_date == execution_date,
+            or_(TI.state == State.SUCCESS, TI.state == State.FAILED),
         )
-        .first()
+        .all()
     )
     return ti
 
 
-def add_sentry(self, *args, **kwargs):
+def add_tagging(task_instance):
     """
-    Add customized tagging and breadcrumbs to TaskInstance init.
+    Add customized tagging to TaskInstances.
     """
-    original_task_init(self, *args, **kwargs)
-    self.operator = self.task.__class__.__name__
     with configure_scope() as scope:
         for tag_name in SCOPE_TAGS:
-            scope.set_tag(tag_name, getattr(self, tag_name))
+            attribute = getattr(task_instance, tag_name)
+            if tag_name == "operator":
+                attribute = task_instance.task.__class__.__name__
+            scope.set_tag(tag_name, attribute)
 
-    original_pre_execute = self.task.pre_execute
 
-    task_copy = self.task
-    execution_date_copy = self.execution_date
+@provide_session
+def add_breadcrumbs(task_instance, session=None):
+    """
+    Add customized breadcrumbs to TaskInstances.
+    """
+    task_ids = task_instance.task.dag.task_ids
+    execution_date = task_instance.execution_date
+    dag_id = task_instance.dag_id
+    task_instances = get_task_instances(dag_id, task_ids, execution_date, session)
+    for ti in task_instances:
+        data = {}
+        for crumb_tag in SCOPE_CRUMBS:
+            data[crumb_tag] = getattr(ti, crumb_tag)
 
-    def add_breadcrumbs(self=task_copy, context=None):
-        for task in task_copy.get_flat_relatives(upstream=True):
-            task_instance = get_task_instance(task, execution_date_copy)
-            operator = task.__class__.__name__
-            add_breadcrumb(
-                category="upstream_tasks",
-                message="Upstream Task: {ti.dag_id}.{ti.task_id}, "
-                "Execution: {ti.execution_date}, State:[{ti.state}], Operation: {operator}".format(
-                    ti=task_instance, operator=operator
-                ),
-                level="info",
-            )
-        original_pre_execute(context=context)
+        add_breadcrumb(category="completed_tasks", data=data, level="info")
 
-    self.task.pre_execute = add_breadcrumbs
+
+@provide_session
+def add_sentry(task_instance, *args, session=None, **kwargs):
+    """
+    Create a scope for tagging and breadcrumbs in TaskInstance._run_raw_task.
+    """
+    # Avoid leaking tags by using push_scope.
+    with push_scope():
+        add_tagging(task_instance)
+        add_breadcrumbs(task_instance, session)
+        try:
+            original_run_raw_task(task_instance, *args, session=session, **kwargs)
+        except Exception:
+            capture_exception()
+            raise
 
 
 class SentryHook(BaseHook):
@@ -70,48 +94,36 @@ class SentryHook(BaseHook):
     """
 
     def __init__(self, sentry_conn_id=None):
-        integrations = []
         ignore_logger("airflow.task")
-        executor_name = configuration.conf.get("core", "EXECUTOR")
+        ignore_logger("airflow.jobs.backfill_job.BackfillJob")
+        executor_name = conf.get("core", "EXECUTOR")
 
         sentry_flask = FlaskIntegration()
+        integrations = [sentry_flask]
 
         if executor_name == "CeleryExecutor":
             from sentry_sdk.integrations.celery import CeleryIntegration
 
             sentry_celery = CeleryIntegration()
-            integrations = [sentry_celery]
-        else:
-            import logging
-            from sentry_sdk.integrations.logging import LoggingIntegration
-
-            sentry_logging = LoggingIntegration(
-                level=logging.INFO, event_level=logging.ERROR
-            )
-            integrations = [sentry_logging]
-
-        integrations.append(sentry_flask)
-
-        self.conn_id = None
-        self.dsn = None
+            integrations += [sentry_celery]
 
         try:
+            conn_id = None
+            dsn = None
             if sentry_conn_id is None:
-                self.conn_id = self.get_connection("sentry_dsn")
+                conn_id = self.get_connection("sentry_dsn")
             else:
-                self.conn_id = self.get_connection(sentry_conn_id)
-            self.dsn = self.conn_id.host
-            init(dsn=self.dsn, integrations=integrations)
+                conn_id = self.get_connection(sentry_conn_id)
+            dsn = conn_id.host
+            init(dsn=dsn, integrations=integrations)
         except (AirflowException, exc.OperationalError):
-            self.log.warning(
-                "Connection was not found, defaulting to environment variable."
-            )
+            self.log.debug("Sentry defaulting to environment variable.")
             init(integrations=integrations)
 
-        TaskInstance.__init__ = add_sentry
+        TaskInstance._run_raw_task = add_sentry
         TaskInstance._sentry_integration_ = True
 
 
 if not getattr(TaskInstance, "_sentry_integration_", False):
-    original_task_init = TaskInstance.__init__
+    original_run_raw_task = TaskInstance._run_raw_task
     SentryHook()
