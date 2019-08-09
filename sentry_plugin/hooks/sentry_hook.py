@@ -1,8 +1,9 @@
-from airflow import configuration
+from airflow import configuration as conf
 from airflow.exceptions import AirflowException
 from airflow.hooks.base_hook import BaseHook
 from airflow.models import TaskInstance
 from airflow.utils.db import provide_session
+from airflow.utils.state import State
 
 from sentry_sdk import (
     configure_scope,
@@ -13,7 +14,7 @@ from sentry_sdk import (
 )
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.integrations.flask import FlaskIntegration
-from sqlalchemy import exc
+from sqlalchemy import exc, or_
 
 SCOPE_TAGS = frozenset(("task_id", "dag_id", "execution_date", "operator"))
 SCOPE_CRUMBS = frozenset(
@@ -35,6 +36,7 @@ def get_task_instances(dag_id, task_ids, execution_date, session=None):
             TI.dag_id == dag_id,
             TI.task_id.in_(task_ids),
             TI.execution_date == execution_date,
+            or_(TI.state == State.SUCCESS, TI.state == State.FAILED),
         )
         .all()
     )
@@ -53,6 +55,7 @@ def add_tagging(task_instance):
             scope.set_tag(tag_name, attribute)
 
 
+@provide_session
 def add_breadcrumbs(task_instance, session=None):
     """
     Add customized breadcrumbs to TaskInstances.
@@ -62,13 +65,11 @@ def add_breadcrumbs(task_instance, session=None):
     dag_id = task_instance.dag_id
     task_instances = get_task_instances(dag_id, task_ids, execution_date, session)
     for ti in task_instances:
-        if ti is None or ti.state is None:
-            continue
         data = {}
         for crumb_tag in SCOPE_CRUMBS:
             data[crumb_tag] = getattr(ti, crumb_tag)
 
-        add_breadcrumb(category="upstream_tasks", data=data, level="info")
+        add_breadcrumb(category="completed_tasks", data=data, level="info")
 
 
 @provide_session
@@ -95,33 +96,28 @@ class SentryHook(BaseHook):
     def __init__(self, sentry_conn_id=None):
         ignore_logger("airflow.task")
         ignore_logger("airflow.jobs.backfill_job.BackfillJob")
-        executor_name = configuration.conf.get("core", "EXECUTOR")
+        executor_name = conf.get("core", "EXECUTOR")
 
         sentry_flask = FlaskIntegration()
         integrations = [sentry_flask]
 
         if executor_name == "CeleryExecutor":
             from sentry_sdk.integrations.celery import CeleryIntegration
-            from sentry_sdk.integrations.tornado import TornadoIntegration
 
             sentry_celery = CeleryIntegration()
-            sentry_tornado = TornadoIntegration()
             integrations += [sentry_celery]
 
-        self.conn_id = None
-        self.dsn = None
-
         try:
+            conn_id = None
+            dsn = None
             if sentry_conn_id is None:
-                self.conn_id = self.get_connection("sentry_dsn")
+                conn_id = self.get_connection("sentry_dsn")
             else:
-                self.conn_id = self.get_connection(sentry_conn_id)
-            self.dsn = self.conn_id.host
-            init(dsn=self.dsn, integrations=integrations)
+                conn_id = self.get_connection(sentry_conn_id)
+            dsn = conn_id.host
+            init(dsn=dsn, integrations=integrations)
         except (AirflowException, exc.OperationalError):
-            self.log.warning(
-                "Connection was not found, defaulting to environment variable."
-            )
+            self.log.debug("Sentry defaulting to environment variable.")
             init(integrations=integrations)
 
         TaskInstance._run_raw_task = add_sentry

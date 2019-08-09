@@ -9,6 +9,7 @@ from airflow.models import TaskInstance
 from airflow.models import Connection
 from airflow.settings import Session
 from airflow.utils import timezone
+from airflow.utils.state import State
 
 from sentry_sdk import configure_scope
 
@@ -23,7 +24,7 @@ EXECUTION_DATE = timezone.utcnow()
 DAG_ID = "test_dag"
 TASK_ID = "test_task"
 OPERATOR = "test_operator"
-STATE = "success"
+STATE = State.SUCCESS
 DURATION = None
 TEST_SCOPE = {
     "dag_id": DAG_ID,
@@ -37,7 +38,7 @@ CRUMB_DATE = datetime.datetime(2019, 5, 15)
 CRUMB = {
     "timestamp": CRUMB_DATE,
     "type": "default",
-    "category": "upstream_tasks",
+    "category": "completed_tasks",
     "data": TASK_DATA,
     "level": "info",
 }
