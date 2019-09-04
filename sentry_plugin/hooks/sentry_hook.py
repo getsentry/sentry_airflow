@@ -116,7 +116,7 @@ class SentryHook(BaseHook):
                 conn_id = self.get_connection(sentry_conn_id)
             dsn = conn_id.host
             init(dsn=dsn, integrations=integrations)
-        except (AirflowException, exc.OperationalError):
+        except (AirflowException, exc.OperationalError, exc.ProgrammingError):
             self.log.debug("Sentry defaulting to environment variable.")
             init(integrations=integrations)
 
