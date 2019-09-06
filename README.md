@@ -10,10 +10,10 @@ A plugin for [Airflow](https://airflow.apache.org/) dags and tasks that sets up 
 
 ### Local
 
-Install the `sentry-sdk`:
+Install the `sentry-sdk` with the `flask` extra:
 
 ```shell
-$ pip install sentry-sdk
+$ pip install --upgrade 'sentry-sdk[flask]==0.11.2'
 ```
 
 Create a plugin folder in your `AIRFLOW_HOME` directory if you do not have one yet:

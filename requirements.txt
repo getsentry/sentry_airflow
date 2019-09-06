@@ -1,4 +1,1 @@
-apache-airflow>=1.10.2
-blinker>=1.1
-celery>=4.3.0
-sentry-sdk>=0.5.4
+sentry-sdk[flask]>=0.11.2
