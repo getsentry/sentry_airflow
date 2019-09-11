@@ -87,13 +87,19 @@ def add_sentry(task_instance, *args, session=None, **kwargs):
             capture_exception()
             raise
 
+def get_dsn(conn):
+    if None in (conn.conn_type, conn.login):
+        return conn.host
+
+    dsn = '{conn.conn_type}://{conn.login}@{conn.host}/{conn.schema}'.format(conn=conn)
+    return dsn
 
 class SentryHook(BaseHook):
     """
     Wrap around the Sentry SDK.
     """
 
-    def __init__(self, sentry_conn_id=None):
+    def __init__(self, sentry_conn_id="sentry_dsn"):
         ignore_logger("airflow.task")
         ignore_logger("airflow.jobs.backfill_job.BackfillJob")
         executor_name = conf.get("core", "EXECUTOR")
@@ -108,13 +114,9 @@ class SentryHook(BaseHook):
             integrations += [sentry_celery]
 
         try:
-            conn_id = None
             dsn = None
-            if sentry_conn_id is None:
-                conn_id = self.get_connection("sentry_dsn")
-            else:
-                conn_id = self.get_connection(sentry_conn_id)
-            dsn = conn_id.host
+            conn = self.get_connection(sentry_conn_id)
+            dsn = get_dsn(conn)
             init(dsn=dsn, integrations=integrations)
         except (AirflowException, exc.OperationalError, exc.ProgrammingError):
             self.log.debug("Sentry defaulting to environment variable.")

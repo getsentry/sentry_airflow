@@ -18,6 +18,7 @@ from sentry_airflow.hooks.sentry_hook import (
     get_task_instances,
     add_tagging,
     add_breadcrumbs,
+    get_dsn,
 )
 
 EXECUTION_DATE = timezone.utcnow()
@@ -43,7 +44,6 @@ CRUMB = {
     "level": "info",
 }
 
-
 class MockQuery:
     """
     Mock Query for when session is called.
@@ -64,7 +64,6 @@ class MockQuery:
 
     def delete(self):
         pass
-
 
 class TestSentryHook(unittest.TestCase):
     @mock.patch("sentry_airflow.hooks.sentry_hook.SentryHook.get_connection")
@@ -111,3 +110,27 @@ class TestSentryHook(unittest.TestCase):
         with configure_scope() as scope:
             test_crumb = scope._breadcrumbs.pop()
             self.assertEqual(CRUMB, test_crumb)
+
+    def test_get_dsn_host(self):
+        """
+        Test getting dsn just from host
+        """
+        conn = Connection(host="https://foo@sentry.io/123")
+        dsn = get_dsn(conn)
+        self.assertEqual(dsn, "https://foo@sentry.io/123")
+
+    def test_get_dsn_env_var(self):
+        """
+        Test getting dsn from host, conn_type, login and schema
+        """
+        conn = Connection(conn_type="http", login="bar", host="getsentry.io", schema="987")
+        dsn = get_dsn(conn)
+        self.assertEqual(dsn, "http://bar@getsentry.io/987")
+
+    def test_get_dsn_from_host_with_none(self):
+        """
+        Test getting dsn from host if other parameters are None
+        """
+        conn = Connection(conn_type="http", login=None, host="https://foo@sentry.io/123")
+        dsn = get_dsn(conn)
+        self.assertEqual(dsn, "https://foo@sentry.io/123")
