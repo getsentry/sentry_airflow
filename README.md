@@ -26,8 +26,7 @@ Then clone this repository in there:
 
 ```shell
 $ cd $AIRFLOW_HOME/plugins
- $ git clone git@github.com:getsentry/sentry_airflow.git
-$ mv sentry-airflow sentry_airflow
+$ git clone git@github.com:getsentry/sentry_airflow.git
 ```
 
 **Make sure you have setup your `SENTRY_DSN` in your environment variables!** The DSN can be found in Sentry by navigating to [Project Name] -> Project Settings -> Client Keys (DSN). Its template resembles the following: `'{PROTOCOL}://{PUBLIC_KEY}@{HOST}/{PROJECT_ID}'`
