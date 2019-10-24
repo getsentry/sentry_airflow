@@ -163,7 +163,7 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
             transaction_span_key = "__sentry_parent_span" + run_id
 
             if first_task:
-                transaction_span = Span(op="airflow", transaction="dag_id: {}".format(dag_id), sampled=True, trace_id=trace_id)
+                transaction_span = Span(op="airflow", transaction="dag_id: {}".format(dag_id), sampled=True, span_id=parent_span_id, trace_id=trace_id)
 
                 json_transaction_span = json.dumps(transaction_span.to_json(client), default=date_json_serial)
 
@@ -183,8 +183,16 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
 
             # All tasks have finished
             else:
+                def to_json_span(span):
+                    json_span = span.to_json(client)
+
+                    json_span['start_timestamp'] = json_span['start_timestamp'].strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    json_span['timestamp'] = json_span['timestamp'].strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+                    return json_span
+
                 last_recorded_spans = [
-                    span.to_json(client)
+                    to_json_span(span)
                     for span in task_span._span_recorder.finished_spans
                     if span is not None
                 ]
