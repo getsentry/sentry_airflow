@@ -1,9 +1,11 @@
+import json
 import uuid
+from datetime import datetime
 
 from airflow import configuration as conf
 from airflow.exceptions import AirflowException
 from airflow.hooks.base_hook import BaseHook
-from airflow.models import TaskInstance, DagRun, XCom
+from airflow.models import TaskInstance, DagRun, XCom, Variable
 from airflow.utils.db import provide_session
 from airflow.utils.state import State
 
@@ -22,7 +24,8 @@ SCOPE_CRUMBS = frozenset(
 )
 
 
-def get_task_instances(dag_id, task_ids, execution_date, session):
+@provide_session
+def get_task_instances(dag_id, task_ids, execution_date, session=None):
     """
     Retrieve attribute from task.
     """
@@ -41,7 +44,8 @@ def get_task_instances(dag_id, task_ids, execution_date, session):
     return ti
 
 
-def get_dag_run(task_instance, session):
+@provide_session
+def get_dag_run(task_instance, session=None):
     dag_run = (
         session.query(DagRun)
         .filter_by(dag_id=task_instance.dag_id, execution_date=task_instance.execution_date)
@@ -67,7 +71,8 @@ def add_tagging(task_instance, run_id):
             scope.set_tag(tag_name, attribute)
 
 
-def add_breadcrumbs(task_instance, session):
+@provide_session
+def add_breadcrumbs(task_instance, session=None):
     """
     Add customized breadcrumbs to TaskInstances.
     """
@@ -76,7 +81,7 @@ def add_breadcrumbs(task_instance, session):
     task_ids = task_instance.task.dag.task_ids
     execution_date = task_instance.execution_date
     dag_id = task_instance.dag_id
-    task_instances = get_task_instances(dag_id, task_ids, execution_date, session)
+    task_instances = get_task_instances(dag_id, task_ids, execution_date)
     for ti in task_instances:
         data = {}
         for crumb_tag in SCOPE_CRUMBS:
@@ -85,7 +90,8 @@ def add_breadcrumbs(task_instance, session):
         hub.add_breadcrumb(category="completed_tasks", data=data, level="info")
 
 
-def get_unfinished_tasks(dag_run, session):
+@provide_session
+def get_unfinished_tasks(dag_run, session=None):
     unfinished_tasks = dag_run.get_task_instances(
         state=State.unfinished(),
         session=session
@@ -93,30 +99,28 @@ def get_unfinished_tasks(dag_run, session):
 
     return unfinished_tasks
 
-def get_traceparent(task_instance, dag_run, run_id, session):
-    dag_id = task_instance.dag_id
 
+def date_json_serial(obj):
+    if isinstance(obj, datetime):
+        return obj.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    else:
+        return obj
+
+
+@provide_session
+def is_first_task(task_instance, dag_run, session=None):
     all_tasks = dag_run.get_task_instances(session=session)
-    unfinished_tasks = get_unfinished_tasks(dag_run, session)
+    unfinished_tasks = get_unfinished_tasks(dag_run)
 
     # Before first task, all tasks are unfinished
-    if len(all_tasks) == len(unfinished_tasks):
-        parent_span = Span(op="airflow", transaction="dag_id: {}".format(dag_id), sampled=True)
+    return len(all_tasks) == len(unfinished_tasks)
 
-        traceparent = parent_span.to_traceparent()
 
-        task_instance.xcom_push(key=run_id, value=traceparent)
-        print("Xcom stuff")
-        print(session.query(XCom).all())
-        print(task_instance.xcom_pull(key=run_id))
-        return traceparent
+def get_ids(task_instance, first_task, trace_key, span_key):
+    if first_task:
+        return uuid.uuid4().hex, uuid.uuid4().hex[16:]
     
-    print("traceparent")
-    print(session.query(XCom).all())
-    traceparent = task_instance.xcom_pull(key=run_id)
-    print(traceparent)
-    task_instance.xcom_push(key=run_id, value=traceparent)
-    return traceparent
+    return task_instance.xcom_pull(key=trace_key), task_instance.xcom_pull(key=span_key)
 
 
 @provide_session
@@ -125,31 +129,110 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
     Create a scope for tagging and breadcrumbs in TaskInstance._run_raw_task.
     """
     hub = Hub.current
+    client = hub.client
 
     # Avoid leaking tags by using push_scope.
     with hub.push_scope():
-        dag_run = get_dag_run(task_instance, session)
+        dag_run = get_dag_run(task_instance)
         run_id = dag_run.run_id
+        current_task_id = task_instance.task_id
 
         add_tagging(task_instance, run_id)
-        add_breadcrumbs(task_instance, session)
+        add_breadcrumbs(task_instance)
 
-        traceparent = get_traceparent(task_instance, dag_run, run_id, session)
+        trace_key = "__sentry_trace_id__" + run_id
+        span_key = "__sentry_span_id__" + run_id
 
-        parent_span = Span.from_traceparent(traceparent)
+        first_task = is_first_task(task_instance, dag_run) 
+        trace_id, parent_span_id = get_ids(task_instance, first_task, trace_key, span_key)
+
+        task_span = Span(op="airflow", description="task_id: {}".format(current_task_id), sampled=True, trace_id=trace_id, parent_span_id=parent_span_id)
 
         try:
-            with hub.start_span(parent_span.new_span(same_process_as_parent=False)):
+            with hub.start_span(task_span):
                 original_run_raw_task(task_instance, *args, session=session, **kwargs)
         except Exception:
             hub.capture_exception()
             raise
         finally:
-            unfinished_tasks = get_unfinished_tasks(dag_run, session)
+            task_ids = task_instance.task.dag.task_ids
+            execution_date = task_instance.execution_date
+            dag_id = task_instance.dag_id
+            unfinished_tasks = get_unfinished_tasks(dag_run)
 
-            if len(unfinished_tasks) == 0:
-                parent_span.finish(hub=hub) 
+            transaction_span_key = "__sentry_parent_span" + run_id
 
+            if first_task:
+                transaction_span = Span(op="airflow", transaction="dag_id: {}".format(dag_id), sampled=True, trace_id=trace_id)
+
+                json_transaction_span = json.dumps(transaction_span.to_json(client), default=date_json_serial)
+
+                task_instance.xcom_push(key=transaction_span_key, value=json_transaction_span)
+                task_instance.xcom_push(key=trace_key, value=trace_id)
+                task_instance.xcom_push(key=span_key, value=parent_span_id)
+
+            if len(unfinished_tasks):
+                recorded_spans = [
+                    json.dumps(span.to_json(client), default=date_json_serial)
+                    for span in task_span._span_recorder.finished_spans
+                    if span is not None
+                ]
+
+                task_span_key = "__sentry" + current_task_id + run_id
+                task_instance.xcom_push(key=task_span_key, value=recorded_spans)
+
+            # All tasks have finished
+            else:
+                last_recorded_spans = [
+                    span.to_json(client)
+                    for span in task_span._span_recorder.finished_spans
+                    if span is not None
+                ]
+
+
+                for previous_task_id in task_ids:
+                    if previous_task_id is not current_task_id:
+                        previous_recorded_spans = task_instance.xcom_pull(key="__sentry" + previous_task_id + run_id, task_ids=previous_task_id)
+                        span = [
+                            json.loads(span)
+                            for span in previous_recorded_spans
+                            if span is not None
+                        ]
+                        last_recorded_spans.extend(span)
+
+                json_transaction_span = json.loads(task_instance.xcom_pull(key=transaction_span_key))
+
+                print({
+                    "type": "transaction",
+                    "transaction": json_transaction_span['transaction'],
+                    "contexts": {"trace": get_trace_context(json_transaction_span)},
+                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "start_timestamp": json_transaction_span['start_timestamp'],
+                    "spans": last_recorded_spans,
+                })
+
+                hub.capture_event(
+                    {
+                        "type": "transaction",
+                        "transaction": json_transaction_span['transaction'],
+                        "contexts": {"trace": get_trace_context(json_transaction_span)},
+                        "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                        "start_timestamp": json_transaction_span['start_timestamp'],
+                        "spans": last_recorded_spans,
+                    }
+                )
+
+
+def get_trace_context(span):
+    rv = {
+        "trace_id": span['trace_id'],
+        "span_id": span['span_id'],
+        "parent_span_id": span['parent_span_id'],
+        "op": span['op'],
+        "description": span['description'],
+    }
+
+    return rv
 
 def get_dsn(conn):
     if None in (conn.conn_type, conn.login):
@@ -182,7 +265,7 @@ class SentryHook(BaseHook):
             sentry_sdk.init(dsn=dsn, integrations=integrations, debug=True, traces_sample_rate=1)
         except (AirflowException, exc.OperationalError, exc.ProgrammingError):
             self.log.debug("Sentry defaulting to environment variable.")
-            init(integrations=integrations)
+            sentry_sdk.init(integrations=integrations)
 
         TaskInstance._run_raw_task = sentry_patched_run_raw_task
         TaskInstance._sentry_integration_ = True
