@@ -60,9 +60,11 @@ def add_tagging(task_instance, run_id):
     Add customized tagging to TaskInstances.
     """
     hub = Hub.current
+    executor_name = conf.get("core", "EXECUTOR")
 
     with hub.configure_scope() as scope:
         scope.set_tag("run_id", run_id)
+        scope.set_tag("executor", executor_name)
 
         for tag_name in SCOPE_TAGS:
             attribute = getattr(task_instance, tag_name)
@@ -146,7 +148,7 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
         first_task = is_first_task(task_instance, dag_run) 
         trace_id, parent_span_id = get_ids(task_instance, first_task, trace_key, span_key)
 
-        task_span = Span(op="airflow", description="task_id: {}".format(current_task_id), sampled=True, trace_id=trace_id, parent_span_id=parent_span_id)
+        task_span = Span(op="airflow-task", description=current_task_id, sampled=True, trace_id=trace_id, parent_span_id=parent_span_id)
 
         try:
             with hub.start_span(task_span):
@@ -155,15 +157,17 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
             hub.capture_exception()
             raise
         finally:
+            dag_run = get_dag_run(task_instance)
             task_ids = task_instance.task.dag.task_ids
             execution_date = task_instance.execution_date
             dag_id = task_instance.dag_id
             unfinished_tasks = get_unfinished_tasks(dag_run)
+            dag_run_state = dag_run.state
 
             transaction_span_key = "__sentry_parent_span" + run_id
 
             if first_task:
-                transaction_span = Span(op="airflow", transaction="dag_id: {}".format(dag_id), sampled=True, span_id=parent_span_id, trace_id=trace_id)
+                transaction_span = Span(op="airflow-dag-run", transaction="dag_run: {} - {}".format(dag_id, execution_date), description=run_id, sampled=True, span_id=parent_span_id, trace_id=trace_id)
 
                 json_transaction_span = json.dumps(transaction_span.to_json(client), default=date_json_serial)
 
@@ -171,17 +175,17 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
                 task_instance.xcom_push(key=trace_key, value=trace_id)
                 task_instance.xcom_push(key=span_key, value=parent_span_id)
 
-            if len(unfinished_tasks):
+            if len(unfinished_tasks) and dag_run_state is not State.FAILED:
                 recorded_spans = [
                     json.dumps(span.to_json(client), default=date_json_serial)
                     for span in task_span._span_recorder.finished_spans
-                    if span is not None
+                    if span is not None and task_span._span_recorder is not None
                 ]
 
                 task_span_key = "__sentry" + current_task_id + run_id
                 task_instance.xcom_push(key=task_span_key, value=recorded_spans)
 
-            # All tasks have finished
+            # All tasks have finished or dag_run has failed
             else:
                 def to_json_span(span):
                     json_span = span.to_json(client)
@@ -194,7 +198,7 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
                 last_recorded_spans = [
                     to_json_span(span)
                     for span in task_span._span_recorder.finished_spans
-                    if span is not None
+                    if span is not None and task_span._span_recorder is not None
                 ]
 
 
@@ -270,7 +274,7 @@ class SentryHook(BaseHook):
             dsn = None
             conn = self.get_connection(sentry_conn_id)
             dsn = get_dsn(conn)
-            sentry_sdk.init(dsn=dsn, integrations=integrations, debug=True, traces_sample_rate=1)
+            sentry_sdk.init(dsn=dsn, integrations=integrations, debug=True, traces_sample_rate=0.3)
         except (AirflowException, exc.OperationalError, exc.ProgrammingError):
             self.log.debug("Sentry defaulting to environment variable.")
             sentry_sdk.init(integrations=integrations)

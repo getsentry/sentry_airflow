@@ -88,7 +88,7 @@ class TestSentryHook(unittest.TestCase):
         """
         Test adding tags.
         """
-        add_tagging(self.ti)
+        add_tagging(self.ti, run_id='example-run-id')
         with configure_scope() as scope:
             for key, value in scope._tags.items():
                 self.assertEqual(TEST_SCOPE[key], value)
