@@ -2,9 +2,11 @@
 [![License](http://img.shields.io/:license-Apache%202-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0.txt)
 [![Sentry Status](https://img.shields.io/badge/sentry-sign_up-white.svg?logo=sentry&style=social)](https://docs.sentry.io)
 
+### Note: As of Airflow 1.10.6 you can directly install [Sentry in Airflow](https://airflow.apache.org/errors.html) without the use of this plugin. 
+
 # Sentry Airflow Plugin
 
-A plugin for [Airflow](https://airflow.apache.org/) dags and tasks that sets up [Sentry](https://sentry.io) for error logging.  
+A plugin for [Airflow](https://airflow.apache.org/) dags and tasks that sets up [Sentry](https://sentry.io) for error logging. 
 
 ## Setup
 
