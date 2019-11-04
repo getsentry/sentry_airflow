@@ -1,5 +1,6 @@
 import json
 import uuid
+import os
 from datetime import datetime
 
 from airflow import configuration as conf
@@ -121,19 +122,18 @@ def is_first_task(task_instance, dag_run, session=None):
 def get_ids(task_instance, first_task, trace_key, span_key):
     if first_task:
         return uuid.uuid4().hex, uuid.uuid4().hex[16:]
-    
+
     return task_instance.xcom_pull(key=trace_key), task_instance.xcom_pull(key=span_key)
 
 
 @provide_session
-def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
+def sentry_patched_run_raw_task_with_span(task_instance, *args, session=None, **kwargs):
     """
     Create a scope for tagging and breadcrumbs in TaskInstance._run_raw_task.
     """
     hub = Hub.current
     client = hub.client
 
-    # Avoid leaking tags by using push_scope.
     with hub.push_scope():
         dag_run = get_dag_run(task_instance)
         run_id = dag_run.run_id
@@ -145,10 +145,18 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
         trace_key = "__sentry_trace_id__" + run_id
         span_key = "__sentry_span_id__" + run_id
 
-        first_task = is_first_task(task_instance, dag_run) 
-        trace_id, parent_span_id = get_ids(task_instance, first_task, trace_key, span_key)
+        first_task = is_first_task(task_instance, dag_run)
+        trace_id, parent_span_id = get_ids(
+            task_instance, first_task, trace_key, span_key
+        )
 
-        task_span = Span(op="airflow-task", description=current_task_id, sampled=True, trace_id=trace_id, parent_span_id=parent_span_id)
+        task_span = Span(
+            op="airflow-task",
+            description=current_task_id,
+            sampled=True,
+            trace_id=trace_id,
+            parent_span_id=parent_span_id,
+        )
 
         try:
             with hub.start_span(task_span):
@@ -167,11 +175,22 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
             transaction_span_key = "__sentry_parent_span" + run_id
 
             if first_task:
-                transaction_span = Span(op="airflow-dag-run", transaction="dag_run: {} - {}".format(dag_id, execution_date), description=run_id, sampled=True, span_id=parent_span_id, trace_id=trace_id)
+                transaction_span = Span(
+                    op="airflow-dag-run",
+                    transaction="dag_run: {} - {}".format(dag_id, execution_date),
+                    description=run_id,
+                    sampled=True,
+                    span_id=parent_span_id,
+                    trace_id=trace_id,
+                )
 
-                json_transaction_span = json.dumps(transaction_span.to_json(client), default=date_json_serial)
+                json_transaction_span = json.dumps(
+                    transaction_span.to_json(client), default=date_json_serial
+                )
 
-                task_instance.xcom_push(key=transaction_span_key, value=json_transaction_span)
+                task_instance.xcom_push(
+                    key=transaction_span_key, value=json_transaction_span
+                )
                 task_instance.xcom_push(key=trace_key, value=trace_id)
                 task_instance.xcom_push(key=span_key, value=parent_span_id)
 
@@ -187,11 +206,16 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
 
             # All tasks have finished or dag_run has failed
             else:
+
                 def to_json_span(span):
                     json_span = span.to_json(client)
 
-                    json_span['start_timestamp'] = json_span['start_timestamp'].strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                    json_span['timestamp'] = json_span['timestamp'].strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    json_span["start_timestamp"] = json_span[
+                        "start_timestamp"
+                    ].strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    json_span["timestamp"] = json_span["timestamp"].strftime(
+                        "%Y-%m-%dT%H:%M:%S.%fZ"
+                    )
 
                     return json_span
 
@@ -201,10 +225,12 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
                     if span is not None and task_span._span_recorder is not None
                 ]
 
-
                 for previous_task_id in task_ids:
                     if previous_task_id is not current_task_id:
-                        previous_recorded_spans = task_instance.xcom_pull(key="__sentry" + previous_task_id + run_id, task_ids=previous_task_id)
+                        previous_recorded_spans = task_instance.xcom_pull(
+                            key="__sentry" + previous_task_id + run_id,
+                            task_ids=previous_task_id,
+                        )
                         span = [
                             json.loads(span)
                             for span in previous_recorded_spans
@@ -212,27 +238,37 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
                         ]
                         last_recorded_spans.extend(span)
 
-                json_transaction_span = json.loads(task_instance.xcom_pull(key=transaction_span_key))
-
-                print({
-                    "type": "transaction",
-                    "transaction": json_transaction_span['transaction'],
-                    "contexts": {"trace": get_trace_context(json_transaction_span)},
-                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    "start_timestamp": json_transaction_span['start_timestamp'],
-                    "spans": last_recorded_spans,
-                })
+                json_transaction_span = json.loads(
+                    task_instance.xcom_pull(key=transaction_span_key)
+                )
 
                 hub.capture_event(
                     {
                         "type": "transaction",
-                        "transaction": json_transaction_span['transaction'],
+                        "transaction": json_transaction_span["transaction"],
                         "contexts": {"trace": get_trace_context(json_transaction_span)},
                         "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                        "start_timestamp": json_transaction_span['start_timestamp'],
+                        "start_timestamp": json_transaction_span["start_timestamp"],
                         "spans": last_recorded_spans,
                     }
                 )
+
+
+@provide_session
+def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
+    """
+    Create a scope for tagging and breadcrumbs in TaskInstance._run_raw_task.
+    """
+    hub = Hub.current
+    # Avoid leaking tags by using push_scope.
+    with hub.push_scope():
+        add_tagging(task_instance)
+        add_breadcrumbs(task_instance, session)
+        try:
+            original_run_raw_task(task_instance, *args, session=session, **kwargs)
+        except Exception:
+            capture_exception()
+            raise
 
 
 def get_trace_context(span):
@@ -274,13 +310,16 @@ class SentryHook(BaseHook):
             dsn = None
             conn = self.get_connection(sentry_conn_id)
             dsn = get_dsn(conn)
-            sentry_sdk.init(dsn=dsn, integrations=integrations, debug=True, traces_sample_rate=0.3)
+            sentry_sdk.init(dsn=dsn, integrations=integrations, traces_sample_rate=0.3)
         except (AirflowException, exc.OperationalError, exc.ProgrammingError):
             self.log.debug("Sentry defaulting to environment variable.")
             sentry_sdk.init(integrations=integrations)
 
-        TaskInstance._run_raw_task = sentry_patched_run_raw_task
-        TaskInstance._sentry_integration_ = True
+        if os.environ.get('ENABLE_SENTRY_APM') in ["true", "True"]:
+            self.log.debug("Sentry sending APM spans.")
+            TaskInstance._run_raw_task = sentry_patched_run_raw_task_with_span
+        else:
+            TaskInstance._sentry_integration_ = sentry_patched_run_raw_task
 
 
 if not getattr(TaskInstance, "_sentry_integration_", False):

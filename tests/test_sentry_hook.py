@@ -65,6 +65,7 @@ class MockQuery:
     def delete(self):
         pass
 
+# TODO: Update to use pytest
 class TestSentryHook(unittest.TestCase):
     @mock.patch("sentry_airflow.hooks.sentry_hook.SentryHook.get_connection")
     def setUp(self, mock_get_connection):
