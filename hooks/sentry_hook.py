@@ -319,7 +319,9 @@ class SentryHook(BaseHook):
             self.log.debug("Sentry sending APM spans.")
             TaskInstance._run_raw_task = sentry_patched_run_raw_task_with_span
         else:
-            TaskInstance._sentry_integration_ = sentry_patched_run_raw_task
+            TaskInstance._run_raw_task = sentry_patched_run_raw_task
+
+        TaskInstance._sentry_integration_ = True
 
 
 if not getattr(TaskInstance, "_sentry_integration_", False):
