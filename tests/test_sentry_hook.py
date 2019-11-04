@@ -25,6 +25,8 @@ EXECUTION_DATE = timezone.utcnow()
 DAG_ID = "test_dag"
 TASK_ID = "test_task"
 OPERATOR = "test_operator"
+RUN_ID = "example-run-id"
+
 STATE = State.SUCCESS
 DURATION = None
 TEST_SCOPE = {
@@ -32,6 +34,7 @@ TEST_SCOPE = {
     "task_id": TASK_ID,
     "execution_date": EXECUTION_DATE,
     "operator": OPERATOR,
+    "run_id": RUN_ID,
 }
 TASK_DATA = TEST_SCOPE.copy()
 TASK_DATA.update({"state": STATE, "operator": OPERATOR, "duration": DURATION})
@@ -65,7 +68,7 @@ class MockQuery:
     def delete(self):
         pass
 
-# TODO: Update to use pytest
+# TODO: Update to use pytest fixtures
 class TestSentryHook(unittest.TestCase):
     @mock.patch("sentry_airflow.hooks.sentry_hook.SentryHook.get_connection")
     def setUp(self, mock_get_connection):
@@ -89,7 +92,7 @@ class TestSentryHook(unittest.TestCase):
         """
         Test adding tags.
         """
-        add_tagging(self.ti, run_id='example-run-id')
+        add_tagging(self.ti, run_id=RUN_ID)
         with configure_scope() as scope:
             for key, value in scope._tags.items():
                 self.assertEqual(TEST_SCOPE[key], value)
