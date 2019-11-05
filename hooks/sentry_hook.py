@@ -301,6 +301,8 @@ class SentryHook(BaseHook):
 
         integrations = [FlaskIntegration(), SqlalchemyIntegration()]
 
+        traces_sample_rate = 0.3 if os.environ.get('SENTRY_ENABLE_AIRFLOW_APM') in ["true", "True"] else 0
+
         if executor_name == "CeleryExecutor":
             from sentry_sdk.integrations.celery import CeleryIntegration
 
@@ -310,16 +312,16 @@ class SentryHook(BaseHook):
             dsn = None
             conn = self.get_connection(sentry_conn_id)
             dsn = get_dsn(conn)
-            sentry_sdk.init(dsn=dsn, integrations=integrations, traces_sample_rate=0.3)
+            sentry_sdk.init(dsn=dsn, integrations=integrations, traces_sample_rate=traces_sample_rate)
         except (AirflowException, exc.OperationalError, exc.ProgrammingError):
             self.log.debug("Sentry defaulting to environment variable.")
             sentry_sdk.init(integrations=integrations)
 
-        if os.environ.get('ENABLE_SENTRY_APM') in ["true", "True"]:
+        if traces_sample_rate is 0:
+            TaskInstance._run_raw_task = sentry_patched_run_raw_task
+        else:
             self.log.debug("Sentry sending APM spans.")
             TaskInstance._run_raw_task = sentry_patched_run_raw_task_with_span
-        else:
-            TaskInstance._run_raw_task = sentry_patched_run_raw_task
 
         TaskInstance._sentry_integration_ = True
 
