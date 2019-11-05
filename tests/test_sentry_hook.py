@@ -35,17 +35,21 @@ TEST_SCOPE = {
     "execution_date": EXECUTION_DATE,
     "operator": OPERATOR,
     "run_id": RUN_ID,
+    "executor": "SequentialExecutor",
 }
 TASK_DATA = TEST_SCOPE.copy()
 TASK_DATA.update({"state": STATE, "operator": OPERATOR, "duration": DURATION})
 CRUMB_DATE = datetime.datetime(2019, 5, 15)
 CRUMB = {
-    "timestamp": CRUMB_DATE,
-    "type": "default",
-    "category": "completed_tasks",
-    "data": TASK_DATA,
-    "level": "info",
+    "data": {
+        "timestamp": CRUMB_DATE,
+        "type": "default",
+        "category": "completed_tasks",
+        "data": TASK_DATA,
+        "level": "info",
+    }
 }
+
 
 class MockQuery:
     """
@@ -67,6 +71,7 @@ class MockQuery:
 
     def delete(self):
         pass
+
 
 # TODO: Update to use pytest fixtures
 class TestSentryHook(unittest.TestCase):
@@ -104,7 +109,6 @@ class TestSentryHook(unittest.TestCase):
         ti = get_task_instances(DAG_ID, [TASK_ID], EXECUTION_DATE, self.session)
         self.assertEqual(ti[0], self.ti)
 
-    @freeze_time(CRUMB_DATE.isoformat())
     def test_add_breadcrumbs(self):
         """
         Test adding breadcrumbs.
@@ -127,7 +131,9 @@ class TestSentryHook(unittest.TestCase):
         """
         Test getting dsn from host, conn_type, login and schema
         """
-        conn = Connection(conn_type="http", login="bar", host="getsentry.io", schema="987")
+        conn = Connection(
+            conn_type="http", login="bar", host="getsentry.io", schema="987"
+        )
         dsn = get_dsn(conn)
         self.assertEqual(dsn, "http://bar@getsentry.io/987")
 
@@ -135,6 +141,8 @@ class TestSentryHook(unittest.TestCase):
         """
         Test getting dsn from host if other parameters are None
         """
-        conn = Connection(conn_type="http", login=None, host="https://foo@sentry.io/123")
+        conn = Connection(
+            conn_type="http", login=None, host="https://foo@sentry.io/123"
+        )
         dsn = get_dsn(conn)
         self.assertEqual(dsn, "https://foo@sentry.io/123")
