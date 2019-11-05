@@ -1,4 +1,6 @@
 *.pyc
 
 __pycache__/
-
+.python-version
+.venv
+.vscode
