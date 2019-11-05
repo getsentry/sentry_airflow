@@ -108,6 +108,7 @@ class TestSentryHook(unittest.TestCase):
         ti = get_task_instances(DAG_ID, [TASK_ID], EXECUTION_DATE, self.session)
         self.assertEqual(ti[0], self.ti)
 
+    @freeze_time(CRUMB_DATE.isoformat())
     def test_add_breadcrumbs(self):
         """
         Test adding breadcrumbs.
