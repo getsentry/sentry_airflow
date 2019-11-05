@@ -34,22 +34,17 @@ TEST_SCOPE = {
     "task_id": TASK_ID,
     "execution_date": EXECUTION_DATE,
     "operator": OPERATOR,
-    "run_id": RUN_ID,
-    "executor": "SequentialExecutor",
 }
 TASK_DATA = TEST_SCOPE.copy()
 TASK_DATA.update({"state": STATE, "operator": OPERATOR, "duration": DURATION})
 CRUMB_DATE = datetime.datetime(2019, 5, 15)
 CRUMB = {
-    "data": {
-        "timestamp": CRUMB_DATE,
-        "type": "default",
-        "category": "completed_tasks",
-        "data": TASK_DATA,
-        "level": "info",
-    }
+    "timestamp": CRUMB_DATE,
+    "type": "default",
+    "category": "completed_tasks",
+    "data": TASK_DATA,
+    "level": "info",
 }
-
 
 class MockQuery:
     """
@@ -71,7 +66,6 @@ class MockQuery:
 
     def delete(self):
         pass
-
 
 # TODO: Update to use pytest fixtures
 class TestSentryHook(unittest.TestCase):
@@ -100,7 +94,12 @@ class TestSentryHook(unittest.TestCase):
         add_tagging(self.ti, run_id=RUN_ID)
         with configure_scope() as scope:
             for key, value in scope._tags.items():
-                self.assertEqual(TEST_SCOPE[key], value)
+                if key is "executor":
+                    self.assertEqual(value, "SequentialExecutor")
+                elif key is "run_id":
+                    self.assertEqual(value, RUN_ID)
+                else:
+                    self.assertEqual(TEST_SCOPE[key], value)
 
     def test_get_task_instances(self):
         """
@@ -131,9 +130,7 @@ class TestSentryHook(unittest.TestCase):
         """
         Test getting dsn from host, conn_type, login and schema
         """
-        conn = Connection(
-            conn_type="http", login="bar", host="getsentry.io", schema="987"
-        )
+        conn = Connection(conn_type="http", login="bar", host="getsentry.io", schema="987")
         dsn = get_dsn(conn)
         self.assertEqual(dsn, "http://bar@getsentry.io/987")
 
@@ -141,8 +138,6 @@ class TestSentryHook(unittest.TestCase):
         """
         Test getting dsn from host if other parameters are None
         """
-        conn = Connection(
-            conn_type="http", login=None, host="https://foo@sentry.io/123"
-        )
+        conn = Connection(conn_type="http", login=None, host="https://foo@sentry.io/123")
         dsn = get_dsn(conn)
         self.assertEqual(dsn, "https://foo@sentry.io/123")
