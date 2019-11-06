@@ -262,12 +262,15 @@ def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
     hub = Hub.current
     # Avoid leaking tags by using push_scope.
     with hub.push_scope():
-        add_tagging(task_instance)
+        dag_run = get_dag_run(task_instance)
+        run_id = dag_run.run_id
+
+        add_tagging(task_instance, run_id)
         add_breadcrumbs(task_instance, session)
         try:
             original_run_raw_task(task_instance, *args, session=session, **kwargs)
         except Exception:
-            capture_exception()
+            hub.capture_exception()
             raise
 
 
