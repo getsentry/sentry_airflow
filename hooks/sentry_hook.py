@@ -231,12 +231,15 @@ def sentry_patched_run_raw_task_with_span(task_instance, *args, session=None, **
                             key="__sentry" + previous_task_id + run_id,
                             task_ids=previous_task_id,
                         )
-                        span = [
-                            json.loads(span)
-                            for span in previous_recorded_spans
-                            if span is not None
-                        ]
-                        last_recorded_spans.extend(span)
+
+                        if previous_recorded_spans:
+                            span = [
+                                json.loads(span)
+                                for span in previous_recorded_spans
+                                if span is not None
+                            ]
+
+                            last_recorded_spans.extend(span)
 
                 json_transaction_span = json.loads(
                     task_instance.xcom_pull(key=transaction_span_key)
