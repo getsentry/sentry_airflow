@@ -107,6 +107,7 @@ def sentry_patched_run_raw_task_with_span(task_instance, *args, session=None, **
         dag_run = get_dag_run(task_instance)
         task_id = task_instance.task_id
         dag_id = task_instance.dag_id
+        execution_date = task_instance.execution_date
         run_id = dag_run.run_id
 
         add_tagging(task_instance, run_id)
