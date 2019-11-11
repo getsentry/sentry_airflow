@@ -46,6 +46,7 @@ CRUMB = {
     "level": "info",
 }
 
+
 class MockQuery:
     """
     Mock Query for when session is called.
@@ -66,6 +67,7 @@ class MockQuery:
 
     def delete(self):
         pass
+
 
 # TODO: Update to use pytest fixtures
 class TestSentryHook(unittest.TestCase):
@@ -131,7 +133,9 @@ class TestSentryHook(unittest.TestCase):
         """
         Test getting dsn from host, conn_type, login and schema
         """
-        conn = Connection(conn_type="http", login="bar", host="getsentry.io", schema="987")
+        conn = Connection(
+            conn_type="http", login="bar", host="getsentry.io", schema="987"
+        )
         dsn = get_dsn(conn)
         self.assertEqual(dsn, "http://bar@getsentry.io/987")
 
@@ -139,6 +143,8 @@ class TestSentryHook(unittest.TestCase):
         """
         Test getting dsn from host if other parameters are None
         """
-        conn = Connection(conn_type="http", login=None, host="https://foo@sentry.io/123")
+        conn = Connection(
+            conn_type="http", login=None, host="https://foo@sentry.io/123"
+        )
         dsn = get_dsn(conn)
         self.assertEqual(dsn, "https://foo@sentry.io/123")
