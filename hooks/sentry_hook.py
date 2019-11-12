@@ -188,7 +188,7 @@ class SentryHook(BaseHook):
 
         except (AirflowException, exc.OperationalError, exc.ProgrammingError):
             self.log.debug("Sentry defaulting to environment variable.")
-            sentry_sdk.init(integrations=integrations)
+            sentry_sdk.init(integrations=integrations, traces_sample_rate=traces_sample_rate)
 
         if traces_sample_rate is 0:
             TaskInstance._run_raw_task = sentry_patched_run_raw_task
