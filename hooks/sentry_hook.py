@@ -171,11 +171,6 @@ class SentryHook(BaseHook):
             else 0
         )
 
-        if executor_name == "CeleryExecutor":
-            from sentry_sdk.integrations.celery import CeleryIntegration
-
-            integrations += [CeleryIntegration()]
-
         try:
             dsn = None
             conn = self.get_connection(sentry_conn_id)
