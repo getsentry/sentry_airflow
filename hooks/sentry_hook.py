@@ -115,8 +115,8 @@ def sentry_patched_run_raw_task_with_span(task_instance, *args, session=None, **
         try:
             with hub.start_span(
                 op="airflow-task",
-                transaction="task_run: {} - {} - {}".format(
-                    task_id, dag_id, execution_date
+                transaction="task_run: {} - {}".format(
+                    task_id, dag_id
                 ),
             ):
                 original_run_raw_task(task_instance, *args, session=session, **kwargs)
