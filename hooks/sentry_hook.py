@@ -97,10 +97,11 @@ def add_breadcrumbs(task_instance, session=None):
 
 
 @provide_session
-def sentry_patched_run_raw_task_with_span(task_instance, *args, session=None, **kwargs):
+def sentry_patched_run_raw_task_with_span(task_instance, *args, **kwargs):
     """
     Create a scope for tagging and breadcrumbs in TaskInstance._run_raw_task.
     """
+    session = kwargs.get('session')
     hub = Hub.current
     # Avoid leaking tags by using push_scope.
     with hub.push_scope():
@@ -126,10 +127,11 @@ def sentry_patched_run_raw_task_with_span(task_instance, *args, session=None, **
 
 
 @provide_session
-def sentry_patched_run_raw_task(task_instance, *args, session=None, **kwargs):
+def sentry_patched_run_raw_task(task_instance, *args, **kwargs):
     """
     Create a scope for tagging and breadcrumbs in TaskInstance._run_raw_task.
     """
+    session = kwargs.get('session')
     hub = Hub.current
     # Avoid leaking tags by using push_scope.
     with hub.push_scope():
